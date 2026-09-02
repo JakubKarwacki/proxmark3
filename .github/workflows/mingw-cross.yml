@@ -4,13 +4,16 @@ name: mingw cross-build (client)
 # for x86_64-w64-mingw32 from a Linux GH-hosted runner, without a Windows host.
 #
 # Runner stays ubuntu-latest (GH-hosted, no self-hosted infra to maintain) --
-# the actual mingw-w64/AUR toolchain runs inside an `archlinux:latest` Docker
-# container, because the verified recipe (docs/specs/mingw-cross-build.md)
-# relies on AUR packages (mingw-w64-bzip2/lz4/readline/python312-bin, and the
-# zlib/libpng/freetype2-bootstrap/libjpeg-turbo/gd chain) that only exist in
-# that ecosystem. The produced client/proxmark3.exe is a plain PE32+ file on
-# the bind-mounted workspace, so the Wine smoke test (R3) runs natively on the
-# ubuntu-latest host afterwards -- no Wine-inside-container complexity needed.
+# the actual mingw-w64/AUR toolchain runs inside the prebuilt
+# ghcr.io/jakubkarwacki/proxmark3-mingw-builder image (built once by
+# mingw-builder-image.yml, not rebuilt per-run: the AUR chain --
+# mingw-w64-bzip2/lz4/readline/python312-bin, and the
+# zlib/libpng/freetype2-bootstrap/libjpeg-turbo/gd chain -- takes
+# ~30-45min from scratch, see docs/specs/mingw-cross-build.md). This job
+# just pulls that image and runs `make`. The produced client/proxmark3.exe
+# is a plain PE32+ file on the bind-mounted workspace, so the Wine smoke
+# test (R3) runs natively on the ubuntu-latest host afterwards -- no
+# Wine-inside-container complexity needed.
 
 on:
   push:
@@ -19,6 +22,7 @@ on:
       - 'Makefile.defs'
       - 'client/deps/liblua/**'
       - 'client/deps/jansson/**'
+      - '.github/scripts/mingw-cross-build.sh'
       - '.github/workflows/mingw-cross.yml'
   pull_request:
     paths:
@@ -26,6 +30,7 @@ on:
       - 'Makefile.defs'
       - 'client/deps/liblua/**'
       - 'client/deps/jansson/**'
+      - '.github/scripts/mingw-cross-build.sh'
       - '.github/workflows/mingw-cross.yml'
   workflow_dispatch:
 
@@ -35,28 +40,42 @@ concurrency:
 
 jobs:
   mingw-cross-build:
-    name: Cross-build client (mingw-w64, Arch/AUR container)
+    name: Cross-build client (mingw-w64, prebuilt Arch/AUR image)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read # to pull ghcr.io/jakubkarwacki/proxmark3-mingw-builder
     steps:
       - uses: actions/checkout@v7.0.1
 
-      # Package cache persisted across runs: everything `pacman -U`-installed
-      # (official mingw-w64-gcc + every locally-built AUR .pkg.tar.zst) lands
-      # in /var/cache/pacman/pkg by pacman itself. Bind-mounting a host dir
-      # there and restoring it via actions/cache lets a cache-hit run skip
-      # straight to `pacman -U <cached-file>` instead of re-running makepkg
-      # (the GD chain alone took ~25-45min uncached; see spec Fala 4).
-      - name: Cache mingw-w64/AUR package cache
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ccache persisted across runs: `make clean` (inside the build
+      # script) always wipes obj/, but ccache caches at the
+      # compilation-unit level so a rebuild of an unchanged tree is a
+      # cache hit rather than a ~150-file recompile.
+      - name: Cache ccache
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/.ci-cache/pacman-pkg
-          key: mingw-cross-pacman-pkg-${{ hashFiles('.github/workflows/mingw-cross.yml') }}
-      - name: Build client inside Arch container (mingw-w64 + AUR toolchain)
+          path: ${{ github.workspace }}/.ci-cache/ccache
+          key: mingw-cross-ccache-${{ github.sha }}
+          restore-keys: mingw-cross-ccache-
+
+      - name: Prepare ccache dir
+        run: mkdir -p "${{ github.workspace }}/.ci-cache/ccache"
+
+      - name: Build client (prebuilt mingw-w64 toolchain image)
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/repo" \
-            -v "${{ github.workspace }}/.ci-cache/pacman-pkg:/var/cache/pacman/pkg" \
-            archlinux:latest \
+            -v "${{ github.workspace }}/.ci-cache/ccache:/ccache" \
+            -e CCACHE_DIR=/ccache \
+            ghcr.io/jakubkarwacki/proxmark3-mingw-builder:latest \
             bash /repo/.github/scripts/mingw-cross-build.sh
 
       - name: Verify PE32+ output
