@@ -35,10 +35,10 @@ echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
 su builder -c '
   set -euxo pipefail
   git clone --depth 1 https://aur.archlinux.org/yay-bin.git /tmp/yay-bin
-  cd /tmp/yay-bin && makepkg -si --noconfirm
+  cd /tmp/yay-bin && makepkg -si --noconfirm --skippgpcheck
 '
 
-YAY_INSTALL='yay -S --noconfirm --answerclean None --answerdiff None --mflags --noconfirm'
+YAY_INSTALL='yay -S --noconfirm --answerclean None --answerdiff None --mflags --noconfirm --skippgpcheck'
 
 # AUR build-tool wrappers needed as makedepends by several packages below.
 # Small, not source libraries -- left dual-arch.
@@ -61,7 +61,7 @@ build_mingw_pkg() {
     sed -i 's/_architectures=\"i686-w64-mingw32 x86_64-w64-mingw32\"/_architectures=\"x86_64-w64-mingw32\"/' PKGBUILD
     sed -i \"s/_architectures='i686-w64-mingw32 x86_64-w64-mingw32'/_architectures='x86_64-w64-mingw32'/\" PKGBUILD
     ${extra_sed}
-    makepkg -sf --noconfirm
+    makepkg -sf --noconfirm --skippgpcheck
   "
   pacman -U --noconfirm /home/builder/"$pkg"/"$pkg"-*.pkg.tar.zst
 }
