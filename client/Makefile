@@ -346,7 +346,13 @@ ifneq ($(SKIPPYTHON),1)
         endif
     endif
 endif
-LDLIBS += $(PYTHONLIBLD)
+ifdef IS_MINGW
+    # no static libpython3XX.a is shipped by the mingw-w64 embeddable
+    # Python distribution -- must stay dynamic (documented exception, R7)
+    LDLIBS += -Wl,-Bdynamic $(PYTHONLIBLD) -Wl,-Bstatic
+else
+    LDLIBS += $(PYTHONLIBLD)
+endif
 PM3INCLUDES += $(PYTHONLIBINC)
 
 ## QT6 (or QT5 fallback) (optional)
@@ -430,7 +436,13 @@ ifneq ($(SKIPGD),1)
     GDINCLUDES = $(shell $(PKG_CONFIG_ENV) pkg-config --cflags gdlib 2>/dev/null)
     GDLDLIBS = $(shell $(PKG_CONFIG_ENV) pkg-config --libs gdlib 2>/dev/null)
     ifneq ($(GDLDLIBS),)
-        LDLIBS += $(GDLDLIBS)
+        ifdef IS_MINGW
+            # mingw-w64-gd (AUR) ships shared-only (libgd.dll, no static
+            # libgd.a) -- must stay dynamic (documented exception, R7)
+            LDLIBS += -Wl,-Bdynamic $(GDLDLIBS) -Wl,-Bstatic
+        else
+            LDLIBS += $(GDLDLIBS)
+        endif
         PM3INCLUDES += $(GDINCLUDES)
         GD_FOUND = 1
     endif
@@ -448,6 +460,12 @@ ifneq ($(SKIPREADLINE),1)
     endif
 
     LDLIBS += -lreadline
+    ifdef IS_MINGW
+        # mingw-w64 readline: static link needs -lhistory + -ltermcap
+        # explicitly (client/Makefile:450 alone silently binds the shared
+        # libreadline8.dll via .dll.a when only -lreadline is given).
+        LDLIBS += -lhistory -ltermcap
+    endif
     READLINE_FOUND = 1
 else
 ## Linenoise

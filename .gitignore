@@ -148,3 +148,13 @@ _codeql*
 venv/
 #Claude AI files
 CLAUDE.md
+# --- lokalna infrastruktura agentowa i dane wrazliwe (NIGDY nie commitowac do publicznego forka) ---
+# .agents/ i .claude/ zostaja przy korzeniu repo (wymog natywnego discovery
+# narzedzi agentowych), reszta lokalnych artefaktow (audyty, benchmarki,
+# testy, notatki) zawsze pod .local/ — jedna konwencja, jeden wzorzec do
+# sprawdzenia w CI (.github/workflows/public-fork-leak-guard.yml).
+/.agents/
+/.claude/
+/.local/
+.omp/
+*.session.jsonl

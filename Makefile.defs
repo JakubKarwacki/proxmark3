@@ -85,6 +85,28 @@ ifeq ($(platform),Darwin)
     endif
 endif
 
+# CROSS_MINGW=1: cross-compile the client for x86_64-w64-mingw32 from a
+# non-Windows host (Linux/macOS), instead of relying on uname to detect a
+# native mingw/MSYS shell. See docs/specs/mingw-cross-build.md.
+# All required target libraries (bzip2, lz4, readline, GD chain, ...) must
+# already be installed under the mingw-w64 sysroot (MINGW_SYSROOT) before
+# invoking make with this flag.
+ifeq ($(CROSS_MINGW),1)
+    MINGW_TRIPLE ?= x86_64-w64-mingw32
+    MINGW_SYSROOT ?= /usr/$(MINGW_TRIPLE)
+    IS_WINDOWS := 1
+    IS_MINGW := 1
+    CC := $(MINGW_TRIPLE)-gcc
+    CXX := $(MINGW_TRIPLE)-g++
+    AR := $(MINGW_TRIPLE)-ar rcs
+    RANLIB := $(MINGW_TRIPLE)-ranlib
+    # Isolate every pkg-config lookup to the mingw sysroot: PKG_CONFIG_LIBDIR
+    # replaces (not appends to) the default search path, and PKG_CONFIG_PATH
+    # is cleared so no host x86_64-pc-linux-gnu .pc file can ever leak into a
+    # Windows-target link (R2, docs/specs/mingw-cross-build.md).
+    PKG_CONFIG_ENV := PKG_CONFIG_LIBDIR=$(MINGW_SYSROOT)/lib/pkgconfig PKG_CONFIG_PATH=
+endif
+
 ifeq ($(shell $(CC) -v 2>&1 | grep -c "clang version"), 1)
   DETECTED_COMPILER = clang
 else
@@ -106,8 +128,10 @@ ifdef IS_DARWIN
   AR= /usr/bin/ar rcs
   RANLIB= /usr/bin/ranlib
 else
-  AR= ar rcs
-  RANLIB= ranlib
+  ifneq ($(CROSS_MINGW),1)
+    AR= ar rcs
+    RANLIB= ranlib
+  endif
 endif
 
 ifeq ($(USE_BREW),1)
@@ -199,6 +223,31 @@ ifneq ($(NOHARDENING),1)
   ifeq ($(DETECTED_COMPILER), gcc)
     DEFCFLAGS += -fstack-clash-protection
   endif
+endif
+
+ifeq ($(CROSS_MINGW),1)
+  # R7 (docs/specs/mingw-cross-build.md): statically link the mingw runtime
+  # (libgcc/libstdc++/winpthread) and every target library that ships a
+  # competing .dll.a import lib (GNU ld prefers .dll.a over .a when both are
+  # present in the search path, e.g. bzip2/lz4/readline/zlib all installed
+  # both variants via AUR) so proxmark3.exe carries no dependency beyond
+  # standard Windows system DLLs plus the two libraries with no static
+  # variant available at all (libgd.dll, python3XX.dll — documented gap,
+  # see docs/specs/mingw-cross-build.md T8/T7 notes).
+  DEFLDFLAGS += -static -static-libgcc -static-libstdc++
+  # Default every subsequent -lXXX to the static archive when both a static
+  # (.a) and shared (.dll.a) variant are installed (ld otherwise prefers the
+  # .dll.a) and force gcc's own implicitly-appended runtime libs (libssp,
+  # winpthread) static too. Two libraries have NO static variant at all and
+  # must stay dynamic (client/Makefile brackets those two with an explicit
+  # -Wl,-Bdynamic/-Wl,-Bstatic pair around just their -lXXX flag, AFTER this
+  # -static default, which GNU ld still honors as an override: GD and
+  # Python-embed, see client/Makefile:349,433).
+  DEFLDFLAGS += -Wl,-Bstatic
+  # libreadline.a and libtermcap.a both define the global `PC` termcap
+  # padding-char variable; GCC's -fno-common default (since GCC 10) turns
+  # that into a hard "multiple definition of PC" link error.
+  DEFLDFLAGS += -Wl,--allow-multiple-definition
 endif
 
 # Next ones are activated only if GCCEXTRA=1 or CLANGEXTRA=1

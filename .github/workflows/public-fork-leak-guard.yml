@@ -1,0 +1,42 @@
+name: Public Fork Leak Guard
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+
+jobs:
+  leak-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fail if .agents/, .claude/, or .local/ directories exist in tracked files
+        run: |
+          echo "Checking for leaked local agentic-infra directories..."
+          if git ls-tree -r HEAD | grep -E '\.agents/|\.claude/|\.local/' | grep -v '^.gitignore'; then
+            echo "ERROR: .agents/, .claude/, or .local/ found in tracked files"
+            echo "These must remain local-only. Add to .gitignore and remove from git history."
+            exit 1
+          fi
+
+      - name: Warn if uncommitted local-only directories exist
+        run: |
+          if [ -d .agents ] || [ -d .claude ] || [ -d .local ]; then
+            echo "INFO: .agents/, .claude/, or .local/ exist locally (good — they're gitignored)"
+            echo "Reminder: never stage or commit these directories to this public fork"
+          fi
+
+      - name: Check for common secret patterns (supplementary to GitHub Secret Scanning)
+        run: |
+          echo "Running pattern-based secret checks (GitHub Secret Scanning is primary defense)..."
+          if git grep -E 'password\s*=|api[_-]?key|secret|token' HEAD -- '*.go' '*.c' '*.h' '*.py' 2>/dev/null | grep -v '^\.local/' | head -20; then
+            echo "WARNING: Potential secrets found in code. GitHub Secret Scanning will also flag these."
+            echo "Review and rotate if real."
+          fi

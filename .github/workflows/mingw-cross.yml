@@ -1,0 +1,83 @@
+name: mingw cross-build (client)
+
+# T11, docs/specs/mingw-cross-build.md (R6). Cross-compiles client/proxmark3.exe
+# for x86_64-w64-mingw32 from a Linux GH-hosted runner, without a Windows host.
+#
+# Runner stays ubuntu-latest (GH-hosted, no self-hosted infra to maintain) --
+# the actual mingw-w64/AUR toolchain runs inside an `archlinux:latest` Docker
+# container, because the verified recipe (docs/specs/mingw-cross-build.md)
+# relies on AUR packages (mingw-w64-bzip2/lz4/readline/python312-bin, and the
+# zlib/libpng/freetype2-bootstrap/libjpeg-turbo/gd chain) that only exist in
+# that ecosystem. The produced client/proxmark3.exe is a plain PE32+ file on
+# the bind-mounted workspace, so the Wine smoke test (R3) runs natively on the
+# ubuntu-latest host afterwards -- no Wine-inside-container complexity needed.
+
+on:
+  push:
+    paths:
+      - 'client/Makefile'
+      - 'Makefile.defs'
+      - 'client/deps/liblua/**'
+      - 'client/deps/jansson/**'
+      - '.github/workflows/mingw-cross.yml'
+  pull_request:
+    paths:
+      - 'client/Makefile'
+      - 'Makefile.defs'
+      - 'client/deps/liblua/**'
+      - 'client/deps/jansson/**'
+      - '.github/workflows/mingw-cross.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: mingw-cross-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mingw-cross-build:
+    name: Cross-build client (mingw-w64, Arch/AUR container)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      # Package cache persisted across runs: everything `pacman -U`-installed
+      # (official mingw-w64-gcc + every locally-built AUR .pkg.tar.zst) lands
+      # in /var/cache/pacman/pkg by pacman itself. Bind-mounting a host dir
+      # there and restoring it via actions/cache lets a cache-hit run skip
+      # straight to `pacman -U <cached-file>` instead of re-running makepkg
+      # (the GD chain alone took ~25-45min uncached; see spec Fala 4).
+      - name: Cache mingw-w64/AUR package cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ci-cache/pacman-pkg
+          key: mingw-cross-pacman-pkg-${{ hashFiles('.github/workflows/mingw-cross.yml') }}
+      - name: Build client inside Arch container (mingw-w64 + AUR toolchain)
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/repo" \
+            -v "${{ github.workspace }}/.ci-cache/pacman-pkg:/var/cache/pacman/pkg" \
+            archlinux:latest \
+            bash /repo/.github/scripts/mingw-cross-build.sh
+
+      - name: Verify PE32+ output
+        run: file client/proxmark3.exe | grep -q 'PE32+' || (echo "::error::client/proxmark3.exe is not a PE32+ binary" && exit 1)
+
+      - name: Verify DLL import table (R7 -- no unexpected external DLLs)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends mingw-w64-tools
+          x86_64-w64-mingw32-objdump -p client/proxmark3.exe | grep 'DLL Name' | tee /tmp/imports.txt
+          # Anything beyond system Windows DLLs, api-ms-win-crt-*, libgd.dll
+          # and python312.dll (the two documented no-static-variant
+          # exceptions, see docs/specs/mingw-cross-build.md T7/T8) is a
+          # regression.
+          if grep -viE 'DLL Name: (ADVAPI32|KERNEL32|USER32|WS2_32|api-ms-win-crt-|libgd\.dll|python312\.dll)' /tmp/imports.txt; then
+            echo "::error::unexpected external DLL dependency in proxmark3.exe (R7 regression)"
+            exit 1
+          fi
+
+      - name: Wine smoke test (R3/T10)
+        run: |
+          sudo apt-get install -y --no-install-recommends wine
+          cd client
+          wine proxmark3.exe --help
