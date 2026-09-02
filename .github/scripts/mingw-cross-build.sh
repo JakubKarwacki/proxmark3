@@ -21,9 +21,12 @@ make CROSS_MINGW=1 SKIPBT=1 SKIPQT=1 SKIPREVENGTEST=1 \
 ccache -s
 
 # Stage runtime DLLs the produced exe genuinely needs (R3/T10 packaging)
-# next to it, so the Wine smoke test step can find them.
+# next to it, so the Wine smoke test step can find them. vcruntime140 is
+# a genuine Microsoft VC++ redistributable DLL (python312.dll's own
+# dependency, see mingw-toolchain-setup.sh) -- required on real Windows
+# even though Wine's builtin compatible stub masks its absence locally.
 cd client
 for f in libgd libssp-0 libstdc++-6 libfreetype-6 libjpeg-8 libpng16-16 zlib1 python312 \
-         libgcc_s_seh-1 libwinpthread-1 libbrotlidec libbrotlicommon libbz2-1; do
+         libgcc_s_seh-1 libwinpthread-1 libbrotlidec libbrotlicommon libbz2-1 vcruntime140; do
   cp "/usr/x86_64-w64-mingw32/bin/${f}.dll" .
 done

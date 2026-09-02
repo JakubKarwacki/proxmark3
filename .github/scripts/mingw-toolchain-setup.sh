@@ -90,3 +90,44 @@ Version: 3.12.10
 Cflags: -I${includedir}
 Libs: -L${libdir} -lpython312
 PC
+
+# T10 bugfix (2026-09-02): mingw-w64-python312-bin (T7 above) is a MSVC
+# build of CPython (the official python.org Windows distribution, just
+# repackaged for mingw-w64 headers/import-libs) -- it links against
+# VCRUNTIME140.dll, the Microsoft Visual C++ redistributable runtime.
+# Wine ships its own compatible builtin, so the local Wine smoke test
+# (T10) passed even without this DLL bundled -- but a real Windows
+# machine without the VC++ Redistributable installed (very common on a
+# fresh/minimal install) fails to load python312.dll outright. Fetch a
+# genuine copy from Microsoft's own official redistributable installer
+# (a small single DLL, explicitly redistributable with applications under
+# Microsoft's license) and stage it alongside the other DLLs so
+# mingw-cross-build.sh's copy step picks it up.
+if [ ! -f /usr/x86_64-w64-mingw32/bin/vcruntime140.dll ]; then
+  vcredist_dir="$(mktemp -d)"
+  curl -sL -o "$vcredist_dir/vc_redist.x64.exe" "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+  # The installer is a self-extracting bootstrapper: an outer CAB (license/
+  # UI assets) followed by a second, appended CAB holding the real payload
+  # CABs (one per runtime component/arch) -- carve it out by its "MSCF"
+  # cabinet signature (the second occurrence) rather than parsing the PE
+  # resource structure.
+  python3 -c "
+import re
+data = open('$vcredist_dir/vc_redist.x64.exe', 'rb').read()
+offsets = [m.start() for m in re.finditer(b'MSCF', data)]
+open('$vcredist_dir/payload.cab', 'wb').write(data[offsets[1]:])
+"
+  (cd "$vcredist_dir" && 7z x payload.cab -opayload -y >/dev/null)
+  # a12 is the x64 "Additional Runtime" cabinet (msvcp140.dll_amd64,
+  # vcruntime140.dll_amd64, ...) in the 14.44 (VS 2022) release used here;
+  # find it by content rather than trusting the exact filename to stay
+  # stable across future redistributable releases.
+  runtime_cab="$(grep -arl "vcruntime140.dll_amd64" "$vcredist_dir/payload" 2>/dev/null | head -1)"
+  if [ -z "$runtime_cab" ]; then
+    echo "vc_redist.x64.exe layout changed: no cab contains vcruntime140.dll_amd64" >&2
+    exit 1
+  fi
+  (cd "$vcredist_dir" && mkdir -p dlls && cd dlls && cabextract "$runtime_cab" >/dev/null)
+  $SUDO cp "$vcredist_dir/dlls/vcruntime140.dll_amd64" /usr/x86_64-w64-mingw32/bin/vcruntime140.dll
+  rm -rf "$vcredist_dir"
+fi
