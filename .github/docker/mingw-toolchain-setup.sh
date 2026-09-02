@@ -38,7 +38,7 @@ su builder -c '
   cd /tmp/yay-bin && makepkg -si --noconfirm --skippgpcheck
 '
 
-YAY_INSTALL='yay -S --noconfirm --answerclean None --answerdiff None --mflags --noconfirm --skippgpcheck'
+YAY_INSTALL='yay -S --noconfirm --answerclean None --answerdiff None --mflags "--skippgpcheck"'
 
 # AUR build-tool wrappers needed as makedepends by several packages below.
 # Small, not source libraries -- left dual-arch.
