@@ -2,13 +2,6 @@ name: Windows Build and Test
 
 on:
   workflow_dispatch:
-  push:
-    paths-ignore:
-      - 'doc/**'
-      - 'docker/**'
-      - 'traces/**'
-      - '.vscode/**'
-      - '**.md'
   pull_request:
     paths-ignore:
       - 'doc/**'
@@ -19,7 +12,6 @@ on:
 
 jobs:
   proxspace:
-    if: github.repository == 'RfidResearchGroup/proxmark3' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     defaults:
       run:
