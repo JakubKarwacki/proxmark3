@@ -40,8 +40,10 @@ jobs:
   mingw-cross-build:
     name: Cross-build client (mingw-w64, host toolchain)
     runs-on: [self-hosted, bh-local]
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v4
 
       - name: Build client
         run: bash .github/scripts/mingw-cross-build.sh
@@ -65,3 +67,17 @@ jobs:
         run: |
           cd client
           wine proxmark3.exe --help
+
+      - name: Package Windows client artifact
+        run: |
+          mkdir -p proxmark3-windows-x64
+          cp client/proxmark3.exe proxmark3-windows-x64/
+          cp client/*.dll proxmark3-windows-x64/
+          tar -czf proxmark3-windows-x64.tar.gz proxmark3-windows-x64
+
+      - name: Upload Windows client artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxmark3-windows-x64
+          path: proxmark3-windows-x64.tar.gz
+          retention-days: 14

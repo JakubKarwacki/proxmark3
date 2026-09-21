@@ -25,6 +25,7 @@ on:
 jobs:
   analyze:
     name: Analyze
+    if: github.repository == 'RfidResearchGroup/proxmark3' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       actions: read

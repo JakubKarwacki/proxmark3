@@ -3,15 +3,11 @@ name: mingw toolchain setup (host)
 # Provisions the mingw-w64/AUR cross-compile toolchain directly on the
 # self-hosted runner host (Arch Linux, label bh-local) -- no Docker, no
 # registry. See .github/scripts/mingw-toolchain-setup.sh and
-# docs/specs/mingw-cross-build.md. Runs rarely: only when the provisioning
-# script itself changes, or manually via workflow_dispatch (e.g. after
-# rebuilding the runner host from scratch).
+# docs/specs/mingw-cross-build.md.
+# Runs ONLY manually via workflow_dispatch (e.g. initial setup or host rebuild),
+# to prevent automated CI failures due to password-protected sudo.
 
 on:
-  push:
-    paths:
-      - '.github/scripts/mingw-toolchain-setup.sh'
-      - '.github/workflows/mingw-toolchain-setup.yml'
   workflow_dispatch:
 
 concurrency:
@@ -22,6 +18,9 @@ jobs:
   provision:
     name: Provision mingw-w64/AUR toolchain
     runs-on: [self-hosted, bh-local]
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v7.0.1
-      - run: bash .github/scripts/mingw-toolchain-setup.sh
+      - uses: actions/checkout@v4
+      - name: Run toolchain setup
+        run: bash .github/scripts/mingw-toolchain-setup.sh

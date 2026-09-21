@@ -6,8 +6,13 @@ on:
   pull_request:
     branches: ['**']
 
+concurrency:
+  group: leak-guard-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   leak-check:
+    name: Verify No Leaked Secrets or Local Agentic Infra
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -17,26 +22,37 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fail if .agents/, .claude/, or .local/ directories exist in tracked files
+      - name: Fail if agentic-infra directories or session logs exist in tracked files
         run: |
-          echo "Checking for leaked local agentic-infra directories..."
-          if git ls-tree -r HEAD | grep -E '\.agents/|\.claude/|\.local/' | grep -v '^.gitignore'; then
-            echo "ERROR: .agents/, .claude/, or .local/ found in tracked files"
-            echo "These must remain local-only. Add to .gitignore and remove from git history."
+          echo "Checking for leaked local agentic-infra directories and session logs..."
+          LEAKED_INFRA=$(git ls-tree -r --name-only HEAD | grep -E '(^|/)(\.agents|\.claude|\.local|\.omp|\.gemini)(/|$)|.*\.session\.jsonl$' || true)
+          if [ -n "$LEAKED_INFRA" ]; then
+            echo "::error::Tracked agentic infrastructure or session logs found in git repository:"
+            echo "$LEAKED_INFRA"
+            echo "These must remain strictly local. Add to .gitignore and remove from git history."
             exit 1
           fi
 
-      - name: Warn if uncommitted local-only directories exist
+      - name: Fail if sensitive files (.env, keys, certs) are tracked in git
         run: |
-          if [ -d .agents ] || [ -d .claude ] || [ -d .local ]; then
-            echo "INFO: .agents/, .claude/, or .local/ exist locally (good — they're gitignored)"
-            echo "Reminder: never stage or commit these directories to this public fork"
+          echo "Checking for sensitive credential files..."
+          LEAKED_FILES=$(git ls-tree -r --name-only HEAD | grep -v '^client/resources/' | grep -E '(^|/)(\.env|\.env\..*|.*\.pem|.*\.key|.*\.pfx|id_rsa.*|id_ed25519.*)$' || true)
+          if [ -n "$LEAKED_FILES" ]; then
+            echo "::error::Tracked sensitive key/environment files found in git:"
+            echo "$LEAKED_FILES"
+            exit 1
           fi
 
-      - name: Check for common secret patterns (supplementary to GitHub Secret Scanning)
+      - name: Check for private network IPs or leaked internal tokens
         run: |
-          echo "Running pattern-based secret checks (GitHub Secret Scanning is primary defense)..."
-          if git grep -E 'password\s*=|api[_-]?key|secret|token' HEAD -- '*.go' '*.c' '*.h' '*.py' 2>/dev/null | grep -v '^\.local/' | head -20; then
-            echo "WARNING: Potential secrets found in code. GitHub Secret Scanning will also flag these."
-            echo "Review and rotate if real."
+          echo "Checking for private IP leaks (192.168.100.x)..."
+          if git grep -E '192\.168\.100\.[0-9]+' HEAD -- ':!docs/specs/mingw-cross-build.md' 2>/dev/null; then
+            echo "::error::Private internal LAN IPs found in tracked files."
+            exit 1
+          fi
+
+      - name: Warn if uncommitted local-only directories exist on runner host
+        run: |
+          if [ -d .agents ] || [ -d .claude ] || [ -d .local ] || [ -d .omp ]; then
+            echo "INFO: Local agentic directories exist (good — they are gitignored and not tracked)"
           fi
